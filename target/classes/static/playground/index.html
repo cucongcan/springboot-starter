@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GraphQL Playground</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      * { box-sizing: border-box; }
+      body { height: 100%; margin: 0; width: 100%; overflow: hidden; font-family: sans-serif; }
+      #graphiql { height: 100dvh; }
+      #auth-bar {
+        position: fixed; top: 0; right: 0; z-index: 9999;
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 12px; background: #1a1a2e; color: #ccc;
+        font-size: 12px; border-bottom-left-radius: 8px;
+      }
+      #auth-bar input {
+        width: 320px; padding: 4px 8px; border-radius: 4px;
+        border: 1px solid #444; background: #2a2a3e; color: #eee;
+        font-size: 12px; font-family: monospace;
+      }
+      #auth-bar button {
+        padding: 4px 10px; border-radius: 4px; border: none; cursor: pointer;
+        background: #4a90d9; color: white; font-size: 12px;
+      }
+      #auth-bar button:hover { background: #357abd; }
+      #auth-status { font-size: 11px; }
+    </style>
+    <!-- Dùng cdn.jsdelivr.net — không có redirect CORS như unpkg.com -->
+    <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/graphiql@3.7.1/graphiql.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/graphiql@3.7.1/graphiql.min.js"></script>
+  </head>
+  <body>
+    <!-- Thanh nhập JWT token nhanh -->
+    <div id="auth-bar">
+      <span>🔑 JWT:</span>
+      <input id="token-input" type="text" placeholder="Paste accessToken từ /api/auth/login ..." />
+      <button onclick="setToken()">Set</button>
+      <button onclick="clearToken()" style="background:#c0392b">Clear</button>
+      <span id="auth-status"></span>
+    </div>
+
+    <div id="graphiql">Loading GraphQL Playground...</div>
+
+    <script>
+      // Lưu token vào sessionStorage để giữ qua F5
+      function getToken() { return sessionStorage.getItem('gql_jwt') || ''; }
+      function setToken() {
+        const t = document.getElementById('token-input').value.trim();
+        if (t) {
+          sessionStorage.setItem('gql_jwt', t);
+          document.getElementById('auth-status').textContent = '✅ Token set';
+          document.getElementById('auth-status').style.color = '#2ecc71';
+        }
+      }
+      function clearToken() {
+        sessionStorage.removeItem('gql_jwt');
+        document.getElementById('token-input').value = '';
+        document.getElementById('auth-status').textContent = '🔓 Cleared';
+        document.getElementById('auth-status').style.color = '#e67e22';
+      }
+
+      // Hiển thị token hiện có (nếu có)
+      const saved = getToken();
+      if (saved) {
+        document.getElementById('token-input').value = saved;
+        document.getElementById('auth-status').textContent = '✅ Token loaded';
+        document.getElementById('auth-status').style.color = '#2ecc71';
+      }
+
+      // Fetcher tự động gắn Bearer token nếu có
+      const fetcher = GraphiQL.createFetcher({
+        url: '/graphql',
+        headers: {},
+        fetcherOpts: {
+          headers: () => {
+            const token = getToken();
+            return token ? { Authorization: 'Bearer ' + token } : {};
+          },
+        },
+      });
+
+      // Fallback fetcher thủ công nếu createFetcher không hỗ trợ dynamic headers
+      const customFetcher = async (graphQLParams, opts) => {
+        const token = getToken();
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        };
+        const res = await fetch('/graphql', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(graphQLParams),
+        });
+        return res.json();
+      };
+
+      const defaultQuery = `# Ví dụ: Lấy danh sách bài viết
+query GetPosts {
+  posts(page: 0, size: 5) {
+    content {
+      id
+      title
+      authorUsername
+      published
+      createdAt
+    }
+    totalElements
+    totalPages
+  }
+}
+
+# Ví dụ: Tạo bài viết (cần JWT)
+# mutation CreatePost {
+#   createPost(title: "Hello", content: "World", published: true) {
+#     id
+#     title
+#   }
+# }
+`;
+
+      const root = ReactDOM.createRoot(document.getElementById('graphiql'));
+      root.render(
+        React.createElement(GraphiQL, {
+          fetcher: customFetcher,
+          defaultQuery: defaultQuery,
+          defaultEditorToolsVisibility: true,
+        })
+      );
+    </script>
+  </body>
+</html>

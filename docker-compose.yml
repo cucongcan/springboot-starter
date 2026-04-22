@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: starter-db
+    environment:
+      POSTGRES_DB: starter_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: starter-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_URL: jdbc:postgresql://db:5432/starter_db
+      DB_USER: postgres
+      DB_PASS: password
+      JWT_SECRET: dGhpcy1pcy1hLXZlcnktc2VjcmV0LWtleS1mb3ItandrLXRoYXQtaXMtYXQtbGVhc3QtMjU2LWJpdHMtbG9uZw==
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8080:8080"
+    restart: on-failure
+
+volumes:
+  pgdata:

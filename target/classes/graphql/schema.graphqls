@@ -1,0 +1,55 @@
+type Query {
+    posts(page: Int = 0, size: Int = 10): PostConnection!
+    post(id: ID!): Post
+    myPosts(page: Int = 0, size: Int = 10): PostConnection!
+    me: UserInfo!
+}
+
+type Mutation {
+    # Auth
+    register(username: String!, email: String!, password: String!): AuthPayload!
+    login(username: String!, password: String!): AuthPayload!
+    refreshToken(refreshToken: String!): AuthPayload!
+    logout(refreshToken: String!): Boolean!
+
+    # Posts
+    createPost(title: String!, content: String!, published: Boolean = false): Post!
+    updatePost(id: ID!, title: String!, content: String!, published: Boolean = false): Post!
+    deletePost(id: ID!): Boolean!
+}
+
+# ── Auth ─────────────────────────────────────────────
+type AuthPayload {
+    accessToken: String
+    refreshToken: String
+    tokenType: String
+    message: String
+}
+
+type UserInfo {
+    id: ID!
+    username: String!
+    email: String!
+    roles: [String!]!
+    createdAt: String
+}
+
+# ── Posts ─────────────────────────────────────────────
+type Post {
+    id: ID!
+    title: String!
+    content: String!
+    published: Boolean!
+    authorUsername: String!
+    createdAt: String
+    updatedAt: String
+}
+
+type PostConnection {
+    content: [Post!]!
+    totalElements: Int!
+    totalPages: Int!
+    pageNumber: Int!
+    pageSize: Int!
+    last: Boolean!
+}

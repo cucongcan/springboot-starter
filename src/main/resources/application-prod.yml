@@ -1,0 +1,17 @@
+spring:
+  jpa:
+    show-sql: false
+  graphql:
+    graphiql:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+logging:
+  level:
+    root: WARN
+    com.yourcompany.starter: INFO

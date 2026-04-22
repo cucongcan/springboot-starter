@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    # H2 MODE=PostgreSQL → SQL output gần giống PostgreSQL nhất
+    url: jdbc:h2:mem:ddldb;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: false
+    properties:
+      jakarta:
+        persistence:
+          schema-generation:
+            database:
+              action: none          # không thực thi trên DB
+            scripts:
+              action: create        # ghi ra file
+              create-target: target/generated-schema.sql
+  flyway:
+    enabled: false
+  main:
+    web-application-type: none    # không start HTTP server
