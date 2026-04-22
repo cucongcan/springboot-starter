@@ -1,280 +1,316 @@
 # Spring Boot Starter Template
 
-Backend RESTful API + GraphQL với JWT Auth, CRUD phân trang, sẵn sàng mở rộng.
+A production-ready Spring Boot backend with JWT authentication, REST + GraphQL APIs, pagination, and Flyway migrations — built entirely with Docker, no local Java installation required.
+
+> **Vietnamese docs:** [README-vi.md](README-vi.md)
 
 | | |
 |---|---|
 | **Framework** | Spring Boot 3.2.x, Java 17 |
 | **Database** | PostgreSQL 16 + Flyway |
-| **Auth** | JWT Access Token (15 phút) + Refresh Token (7 ngày) |
+| **Auth** | JWT Access Token (15 min) + Refresh Token (7 days) |
 | **API** | REST `/api/**` + GraphQL `/graphql` |
-| **Build** | Maven (chạy trong Docker, không cần cài Java trên máy host) |
+| **Build** | Maven inside Docker — no Java on host required |
 
 ---
 
-## Mục lục
+## Table of Contents
 
-1. [Build và chạy với Docker](#1-build-và-chạy-với-docker)
-2. [Tạo Flyway Migration](#2-tạo-flyway-migration)
-3. [Generate Migration SQL tự động từ Entity](#3-generate-migration-sql-tự-động-từ-entity)
-4. [Implement Feature mới (REST + GraphQL)](#4-implement-feature-mới-rest--graphql)
-5. [JwtAuthFilter — Cách hoạt động](#5-jwtauthfilter--cách-hoạt-động)
-6. [Viết Tests](#6-viết-tests)
+1. [Build & Run with Docker](#1-build--run-with-docker)
+2. [Environment Variables](#2-environment-variables)
+3. [API Reference](#3-api-reference)
+4. [GraphQL Playground](#4-graphql-playground)
+5. [Flyway Migrations](#5-flyway-migrations)
+6. [Auto-generate Migration SQL from Entities](#6-auto-generate-migration-sql-from-entities)
+7. [Adding a New Feature (REST + GraphQL)](#7-adding-a-new-feature-rest--graphql)
+8. [How JwtAuthFilter Works](#8-how-jwtauthfilter-works)
+9. [Writing Tests](#9-writing-tests)
+10. [Project Structure](#10-project-structure)
 
 ---
 
-## 1. Build và chạy với Docker
+## 1. Build & Run with Docker
 
-Toàn bộ quá trình build/run đều trong container — **không cần cài Java hay Maven trên máy host**.
+The entire build and runtime lives inside containers — **no Java or Maven needed on your machine**.
 
-### Yêu cầu
+**Prerequisite:** Docker Desktop (or Docker Engine + Compose plugin)
 
-- Docker Desktop (hoặc Docker Engine + Compose plugin)
-
-### Chạy môi trường Dev (hot-reload)
+### Dev mode (live source mount)
 
 ```bash
-# Khởi động PostgreSQL + Maven container (bind-mount source code)
 docker compose -f docker-compose.dev.yml up
 ```
 
-Maven container mount trực tiếp thư mục source, chạy `spring-boot:run`. Mọi thay đổi file `.java` → restart tự động nếu dùng Spring DevTools (thêm dependency nếu cần).
+A Maven container mounts your source directory and runs `mvn spring-boot:run`. Code changes that don't require a restart are picked up automatically; otherwise, restart the container.
 
-Xem log:
 ```bash
+# Follow logs
 docker compose -f docker-compose.dev.yml logs -f maven
-```
 
-Dừng:
-```bash
+# Stop
 docker compose -f docker-compose.dev.yml down
 ```
 
-### Build và chạy Production
+### Production build (multi-stage)
 
 ```bash
-# Build image + khởi động app + DB
-docker compose up --build
-
-# Chạy nền
-docker compose up --build -d
+docker compose up --build        # foreground
+docker compose up --build -d     # background
 ```
 
-Quá trình build production (multi-stage):
-1. **Stage 1** — `maven:3.9.6-eclipse-temurin-17`: `mvn package -DskipTests`
-2. **Stage 2** — `eclipse-temurin:17-jre-jammy`: copy `.jar` → image nhỏ (~145MB)
+Build stages:
+1. `maven:3.9.6-eclipse-temurin-17` — `mvn package -DskipTests`
+2. `eclipse-temurin:17-jre-jammy` — copies the `.jar` → ~145 MB final image
 
-### Chỉ chạy tests (không cần DB)
+### Run tests only (no database needed)
 
-Tests dùng H2 in-memory, không cần PostgreSQL:
+Tests use H2 in-memory; no PostgreSQL required.
 
 ```bash
 docker run --rm \
-  -v $(pwd):/app \
-  -w /app \
+  -v $(pwd):/app -w /app \
   maven:3.9.6-eclipse-temurin-17 \
   mvn test -B
 ```
 
-### Biến môi trường
-
-| Biến | Mặc định | Mô tả |
-|------|----------|--------|
-| `DB_URL` | `jdbc:postgresql://localhost:5432/starter_db` | JDBC URL |
-| `DB_USER` | `postgres` | DB username |
-| `DB_PASS` | `password` | DB password |
-| `JWT_SECRET` | *(bắt buộc)* | Base64-encoded key, tối thiểu 256 bit |
-| `CORS_ORIGINS` | `http://localhost:3000` | Allowed origins (comma-separated) |
-| `SPRING_PROFILES_ACTIVE` | `dev` | Profile: `dev` hoặc `prod` |
-
-Tạo `JWT_SECRET` đủ mạnh:
 ```bash
-# Tạo secret 256-bit ngẫu nhiên
+# Single test class
+mvn test -Dtest=PostServiceTest -B
+
+# With JaCoCo coverage report → target/site/jacoco/index.html
+mvn test jacoco:report -B
+```
+
+---
+
+## 2. Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_URL` | `jdbc:postgresql://localhost:5432/starter_db` | JDBC connection URL |
+| `DB_USER` | `postgres` | Database username |
+| `DB_PASS` | `password` | Database password |
+| `JWT_SECRET` | *(required)* | Base64-encoded HMAC-SHA key, minimum 256 bits |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated list of allowed origins |
+| `SPRING_PROFILES_ACTIVE` | `dev` | Active profile: `dev` or `prod` |
+
+Generate a strong `JWT_SECRET`:
+
+```bash
 openssl rand -base64 32
 ```
 
-### Kiểm tra app đang chạy
+Health check:
 
 ```bash
 curl http://localhost:8080/actuator/health
 # {"status":"UP"}
 ```
 
-GraphiQL playground (chỉ profile `dev`): http://localhost:8080/graphiql
+---
+
+## 3. API Reference
+
+### Auth endpoints
+
+| Method | URL | Auth | Description |
+|--------|-----|------|-------------|
+| POST | `/api/auth/register` | Public | Create a new account |
+| POST | `/api/auth/login` | Public | Login → access token + refresh token |
+| POST | `/api/auth/refresh` | Public | Exchange refresh token for a new access token |
+| POST | `/api/auth/logout` | Bearer | Revoke refresh token |
+
+**Login request / response:**
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"Password1"}'
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJ...",
+    "refreshToken": "ca92c0bf-...",
+    "tokenType": "Bearer"
+  }
+}
+```
+
+**Using the access token:**
+
+```bash
+curl http://localhost:8080/api/posts \
+  -H "Authorization: Bearer eyJ..."
+```
+
+### Post endpoints
+
+| Method | URL | Auth | Description |
+|--------|-----|------|-------------|
+| GET | `/api/posts?page=0&size=10&sort=createdAt,desc` | Public | Paginated list |
+| GET | `/api/posts/{id}` | Public | Single post |
+| GET | `/api/posts/my` | Bearer | Posts by the current user |
+| POST | `/api/posts` | Bearer | Create post |
+| PUT | `/api/posts/{id}` | Bearer | Update post (owner or ADMIN) |
+| DELETE | `/api/posts/{id}` | Bearer | Delete post (owner or ADMIN) |
+| GET | `/api/admin/posts` | ADMIN | All posts (admin only) |
+
+**Standard response envelope:**
+
+```json
+{
+  "success": true,
+  "message": "Post created successfully",
+  "data": { "id": 1, "title": "..." }
+}
+```
+
+**Error response:**
+
+```json
+{
+  "success": false,
+  "message": "Post not found with id: 42",
+  "errorCode": "RESOURCE_NOT_FOUND",
+  "timestamp": "2024-01-15T10:30:00Z"
+}
+```
+
+**Pagination response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "content": [...],
+    "pageNumber": 0,
+    "pageSize": 10,
+    "totalElements": 50,
+    "totalPages": 5,
+    "last": false
+  }
+}
+```
 
 ---
 
-## 2. Tạo Flyway Migration
+## 4. GraphQL Playground
 
-Flyway chạy tự động khi app khởi động, theo thứ tự version. File migration **không được sửa sau khi đã chạy trên bất kỳ môi trường nào** — tạo file mới để alter.
+Open **http://localhost:8080/playground.html** (dev mode only).
 
-### Quy tắc đặt tên
+The playground includes pre-filled example queries for all operations. Paste your `accessToken` into the JWT field at the top-right to authenticate mutations.
+
+### Auth mutations
+
+```graphql
+# 1. Register
+mutation {
+  register(username: "alice", email: "alice@example.com", password: "Password1") {
+    message
+  }
+}
+
+# 2. Login → copy accessToken → paste into JWT field
+mutation {
+  login(username: "alice", password: "Password1") {
+    accessToken
+    refreshToken
+    tokenType
+  }
+}
+
+# 3. Current user (requires JWT)
+query {
+  me {
+    id
+    username
+    email
+    roles
+  }
+}
+
+# 4. Refresh access token
+mutation {
+  refreshToken(refreshToken: "uuid-here") {
+    accessToken
+  }
+}
+
+# 5. Logout (requires JWT)
+mutation {
+  logout(refreshToken: "uuid-here")
+}
+```
+
+### Post queries
+
+```graphql
+query {
+  posts(page: 0, size: 5) {
+    content { id title authorUsername published createdAt }
+    totalElements totalPages
+  }
+}
+
+mutation {
+  createPost(title: "Hello", content: "World", published: true) {
+    id title createdAt
+  }
+}
+```
+
+### GraphQL error format
+
+Errors are returned in the standard GraphQL `errors` array with an `extensions.code` field:
+
+```json
+{
+  "errors": [{
+    "message": "Invalid username or password",
+    "path": ["login"],
+    "extensions": { "code": "INVALID_CREDENTIALS" }
+  }]
+}
+```
+
+| Code | Cause |
+|------|-------|
+| `INVALID_CREDENTIALS` | Wrong username or password |
+| `UNAUTHORIZED` | Expired or missing token |
+| `ACCESS_DENIED` | Insufficient role |
+| `NOT_FOUND` | Resource does not exist |
+| `BAD_REQUEST` | Validation failure |
+
+---
+
+## 5. Flyway Migrations
+
+All schema changes go through versioned Flyway SQL files. Files that have run in any environment **must never be edited** — create a new version to alter.
+
+**File naming:** `V{n}__{description}.sql`
 
 ```
-V{số}__{mô_tả}.sql
+src/main/resources/db/migration/
+  V1__create_users_table.sql
+  V2__create_posts_table.sql
+  V3__create_refresh_tokens_table.sql
+  V4__add_post_thumbnail_column.sql   ← new
 ```
 
-Ví dụ:
-```
-V1__create_users_table.sql
-V4__add_post_thumbnail_column.sql
-V5__create_comments_table.sql
-```
-
-Vị trí: `src/main/resources/db/migration/`
-
-### Ví dụ: Thêm cột mới vào bảng có sẵn
+**Adding a column:**
 
 ```sql
 -- V4__add_post_thumbnail_column.sql
 ALTER TABLE posts ADD COLUMN thumbnail_url VARCHAR(500);
 ```
 
-### Ví dụ: Tạo bảng mới (xem [phần 3](#3-implement-feature-mới-rest--graphql))
+**Creating a new table:**
 
 ```sql
 -- V5__create_comments_table.sql
-CREATE TABLE comments (
-    id         BIGSERIAL PRIMARY KEY,
-    content    TEXT         NOT NULL,
-    post_id    BIGINT       NOT NULL REFERENCES posts (id) ON DELETE CASCADE,
-    author_id  BIGINT       NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_comments_post_id   ON comments (post_id);
-CREATE INDEX idx_comments_author_id ON comments (author_id);
-```
-
-### Kiểm tra migration đã chạy
-
-```sql
--- Xem lịch sử migration
-SELECT version, description, installed_on, success
-FROM flyway_schema_history
-ORDER BY installed_rank;
-```
-
-### Lỗi thường gặp
-
-| Lỗi | Nguyên nhân | Xử lý |
-|-----|-------------|--------|
-| `Found more than one migration with version X` | Trùng số version | Đổi số version |
-| `Validate failed: Migration checksum mismatch` | Sửa file đã chạy | Tạo file mới để alter, **không sửa file cũ** |
-| `Table 'flyway_schema_history' doesn't exist` | DB chưa được init | Flyway tự tạo khi chạy lần đầu |
-
----
-
-## 3. Generate Migration SQL tự động từ Entity
-
-> **Giới hạn quan trọng:** Chỉ generate được `CREATE TABLE` (entity mới).
-> `ALTER TABLE` cho incremental change (thêm cột, đổi kiểu dữ liệu) **vẫn phải viết tay**.
-
-### Cách hoạt động
-
-Khi JPA context khởi động với profile `ddl`, Hibernate đọc tất cả `@Entity` và ghi DDL ra file `target/generated-schema.sql` — không cần kết nối PostgreSQL thật (dùng H2 mode=PostgreSQL).
-
-```
-@Entity classes  →  Hibernate  →  target/generated-schema.sql
-(User, Post, ...) (PostgreSQL dialect)  (review → Flyway migration)
-```
-
-### Chạy generate
-
-```bash
-docker run --rm \
-  -v $(pwd):/app \
-  -w /app \
-  maven:3.9.6-eclipse-temurin-17 \
-  mvn test -Dtest=SchemaExportTest -B
-```
-
-Output (ví dụ từ project này):
-
-```sql
-create table posts (published boolean not null, author_id bigint not null,
-  created_at timestamp(6) with time zone, id bigserial not null,
-  updated_at timestamp(6) with time zone, content TEXT not null,
-  title varchar(255) not null, primary key (id));
-
-create table users (created_at timestamp(6) with time zone,
-  id bigserial not null, updated_at timestamp(6) with time zone,
-  username varchar(50) not null unique, email varchar(255) not null unique,
-  password varchar(255) not null, primary key (id));
-
-alter table if exists posts
-  add constraint FK6xvn0811... foreign key (author_id) references users;
-```
-
-### Những điều cần review trước khi dùng làm migration
-
-| Vấn đề | SQL generate ra | Nên sửa thành |
-|--------|----------------|---------------|
-| Constraint name tự sinh | `FK6xvn0811tkyo3nfjk2xvqx6ns` | `fk_posts_author_id` |
-| Thiếu `ON DELETE CASCADE` | `foreign key (author_id) references users` | `references users ON DELETE CASCADE` |
-| Thiếu indexes | *(không có)* | Thêm `CREATE INDEX idx_...` thủ công |
-| Thứ tự cột | ngẫu nhiên | Sắp xếp lại cho dễ đọc |
-
-### Workflow thực tế: Thêm Entity mới
-
-```
-1. Viết @Entity mới (ví dụ: Comment.java)
-       ↓
-2. Chạy SchemaExportTest → xem target/generated-schema.sql
-       ↓
-3. Lấy phần CREATE TABLE comment + ALTER TABLE liên quan
-       ↓
-4. Tạo file migration mới:
-   src/main/resources/db/migration/V5__create_comments_table.sql
-       ↓
-5. Sửa: đổi tên constraint, thêm ON DELETE CASCADE, thêm indexes
-       ↓
-6. Chạy docker compose up → Flyway tự apply migration
-```
-
-### Workflow thực tế: Thêm cột vào Entity có sẵn
-
-Generate **không hỗ trợ** trường hợp này. Viết tay:
-
-```sql
--- V6__add_post_thumbnail_column.sql
-ALTER TABLE posts ADD COLUMN thumbnail_url VARCHAR(500);
-```
-
-### Cách 2 (nhanh hơn, ít chính xác hơn): Capture Hibernate log
-
-Tạm thời set `ddl-auto: create` + chạy với H2 → copy SQL từ console log:
-
-```yaml
-# application-dev.yml — tạm thời thêm, nhớ xoá sau
-spring:
-  jpa:
-    hibernate:
-      ddl-auto: create    # ← tạm thời
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
-```
-
-```bash
-# Chạy app, tìm dòng "create table" trong log, copy ra
-docker compose -f docker-compose.dev.yml up maven 2>&1 | grep -A5 "create table"
-```
-
-Nhược điểm: SQL là H2 syntax (thiếu `BIGSERIAL`, `TEXT`), cần sửa nhiều hơn. Dùng Cách 1 sẽ tốt hơn.
-
----
-
-## 4. Implement Feature mới (REST + GraphQL)
-
-Hướng dẫn thêm module `Comment` (bình luận cho bài viết) — theo đúng cấu trúc như module `Post`.
-
-### Bước 1 — Tạo Flyway Migration
-
-```sql
--- src/main/resources/db/migration/V5__create_comments_table.sql
 CREATE TABLE comments (
     id         BIGSERIAL PRIMARY KEY,
     content    TEXT    NOT NULL,
@@ -283,28 +319,90 @@ CREATE TABLE comments (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
-
 CREATE INDEX idx_comments_post_id ON comments (post_id);
 ```
 
-### Bước 2 — Tạo Entity
+**View migration history:**
+
+```sql
+SELECT version, description, installed_on, success
+FROM flyway_schema_history
+ORDER BY installed_rank;
+```
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Migration checksum mismatch` | Edited a file that already ran | Create a new migration to alter |
+| `Found more than one migration with version X` | Duplicate version number | Rename one file |
+
+---
+
+## 6. Auto-generate Migration SQL from Entities
+
+Hibernate can generate `CREATE TABLE` DDL from your `@Entity` classes. This covers **new tables only** — `ALTER TABLE` for incremental changes must still be written by hand.
+
+```bash
+docker run --rm \
+  -v $(pwd):/app -w /app \
+  maven:3.9.6-eclipse-temurin-17 \
+  mvn test -Dtest=SchemaExportTest -B
+```
+
+Output: `target/generated-schema.sql`
+
+The test uses H2 in `MODE=PostgreSQL` with `PostgreSQLDialect`, so the output is close to real PostgreSQL syntax (`BIGSERIAL`, `TEXT`, `TIMESTAMP WITH TIME ZONE`).
+
+**Review before use:**
+
+| Issue | Generated | Should be |
+|-------|-----------|-----------|
+| Constraint name | `FK6xvn0811...` | `fk_posts_author_id` |
+| Missing `ON DELETE CASCADE` | `references users` | `references users ON DELETE CASCADE` |
+| Missing indexes | *(absent)* | Add `CREATE INDEX` manually |
+
+**Workflow for a new entity:**
+
+```
+1. Write @Entity  →  2. Run SchemaExportTest  →  3. Copy CREATE TABLE block
+→  4. Create V{n}__....sql  →  5. Fix constraint names + add indexes
+→  6. docker compose up  →  Flyway applies migration automatically
+```
+
+---
+
+## 7. Adding a New Feature (REST + GraphQL)
+
+Follow the same eight-step pattern used by the `Post` module. Example: **Comment** feature.
+
+### Step 1 — Migration
+
+```sql
+-- V5__create_comments_table.sql
+CREATE TABLE comments (
+    id BIGSERIAL PRIMARY KEY,
+    content TEXT NOT NULL,
+    post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_comments_post_id ON comments(post_id);
+```
+
+### Step 2 — Entity
 
 ```java
-// src/main/java/com/yourcompany/starter/comment/entity/Comment.java
-@Entity
-@Table(name = "comments")
+@Entity @Table(name = "comments")
 @EntityListeners(AuditingEntityListener.class)
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class Comment {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY)          // always LAZY for relations
     @JoinColumn(name = "post_id", nullable = false)
     private Post post;
 
@@ -312,661 +410,404 @@ public class Comment {
     @JoinColumn(name = "author_id", nullable = false)
     private User author;
 
-    @CreatedDate
-    @Column(updatable = false)
-    private Instant createdAt;
-
-    @LastModifiedDate
-    private Instant updatedAt;
+    @CreatedDate @Column(updatable = false) private Instant createdAt;
+    @LastModifiedDate                       private Instant updatedAt;
 }
 ```
 
-> **Quy tắc:** Luôn dùng `FetchType.LAZY` cho quan hệ `@ManyToOne` và `@OneToMany` để tránh N+1 query.
-
-### Bước 3 — Tạo Repository
+### Step 3 — Repository
 
 ```java
-// src/main/java/com/yourcompany/starter/comment/repository/CommentRepository.java
 public interface CommentRepository extends JpaRepository<Comment, Long> {
-
     Page<Comment> findByPostId(Long postId, Pageable pageable);
 
-    Page<Comment> findByAuthorId(Long authorId, Pageable pageable);
-
-    // JOIN FETCH để tránh N+1 khi cần load author
+    // JOIN FETCH prevents N+1 when the author is needed
     @Query("SELECT c FROM Comment c JOIN FETCH c.author WHERE c.id = :id")
     Optional<Comment> findByIdWithAuthor(@Param("id") Long id);
 }
 ```
 
-### Bước 4 — Tạo DTOs
+### Step 4 — DTO
 
-**Request:**
 ```java
-// src/main/java/com/yourcompany/starter/comment/dto/CommentRequest.java
-@Data
-public class CommentRequest {
-
-    @NotBlank
-    private String content;
-}
-```
-
-**Response** — dùng static factory `from()`, không trả Entity trực tiếp:
-```java
-// src/main/java/com/yourcompany/starter/comment/dto/CommentResponse.java
 @Getter @Builder
 public class CommentResponse {
-
     private final Long id;
     private final String content;
     private final Long postId;
     private final String authorUsername;
     private final Instant createdAt;
 
-    public static CommentResponse from(Comment comment) {
+    public static CommentResponse from(Comment c) {
         return CommentResponse.builder()
-                .id(comment.getId())
-                .content(comment.getContent())
-                .postId(comment.getPost().getId())
-                .authorUsername(comment.getAuthor().getUsername())
-                .createdAt(comment.getCreatedAt())
-                .build();
+                .id(c.getId()).content(c.getContent())
+                .postId(c.getPost().getId())
+                .authorUsername(c.getAuthor().getUsername())
+                .createdAt(c.getCreatedAt()).build();
     }
 }
 ```
 
-### Bước 5 — Tạo Service
+### Step 5 — Service
+
+> Authorization checks (owner / ADMIN) belong in the **service layer**, not the controller.
 
 ```java
-// src/main/java/com/yourcompany/starter/comment/service/CommentService.java
-@Service
-@RequiredArgsConstructor
-@Transactional
+@Service @RequiredArgsConstructor @Transactional
 public class CommentService {
-
-    private final CommentRepository commentRepository;
-    private final PostRepository postRepository;
-    private final UserRepository userRepository;
-
-    @Transactional(readOnly = true)
-    public PagedResponse<CommentResponse> getCommentsByPost(Long postId, Pageable pageable) {
-        Page<CommentResponse> page = commentRepository
-                .findByPostId(postId, pageable)
-                .map(CommentResponse::from);
-        return PagedResponse.from(page);
-    }
-
-    public CommentResponse createComment(Long postId, CommentRequest request, String username) {
+    public CommentResponse createComment(Long postId, CommentRequest req, String username) {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new ResourceNotFoundException("Post", "id", postId));
         User author = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException(username));
-
-        Comment comment = Comment.builder()
-                .content(request.getContent())
-                .post(post)
-                .author(author)
-                .build();
-
-        return CommentResponse.from(commentRepository.save(comment));
-    }
-
-    public void deleteComment(Long id, String username) {
-        Comment comment = commentRepository.findByIdWithAuthor(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Comment", "id", id));
-
-        // Chỉ owner hoặc ADMIN mới được xoá
-        if (!comment.getAuthor().getUsername().equals(username) && !isAdmin(username)) {
-            throw new UnauthorizedException("Not authorized to delete this comment");
-        }
-        commentRepository.delete(comment);
-    }
-
-    private boolean isAdmin(String username) {
-        return userRepository.findByUsername(username)
-                .map(u -> u.getRoles().contains(Role.ROLE_ADMIN))
-                .orElse(false);
+        return CommentResponse.from(commentRepository.save(
+                Comment.builder().content(req.getContent()).post(post).author(author).build()));
     }
 }
 ```
 
-> **Quy tắc:** Authorization check (owner/ADMIN) luôn ở **Service layer**, không phải Controller.
-
-### Bước 6 — Tạo REST Controller
+### Step 6 — REST Controller
 
 ```java
-// src/main/java/com/yourcompany/starter/comment/controller/CommentController.java
 @RestController
 @RequestMapping("/api/posts/{postId}/comments")
 @RequiredArgsConstructor
 public class CommentController {
 
-    private final CommentService commentService;
-
     @GetMapping
-    public ResponseEntity<ApiResponse<PagedResponse<CommentResponse>>> getComments(
+    public ResponseEntity<ApiResponse<PagedResponse<CommentResponse>>> list(
             @PathVariable Long postId,
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC)
-            Pageable pageable) {
-        return ResponseEntity.ok(
-                ApiResponse.success(null, commentService.getCommentsByPost(postId, pageable)));
+            @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success(null,
+                commentService.getCommentsByPost(postId, pageable)));
     }
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<ApiResponse<CommentResponse>> createComment(
+    public ResponseEntity<ApiResponse<CommentResponse>> create(
             @PathVariable Long postId,
-            @Valid @RequestBody CommentRequest request,
-            @AuthenticationPrincipal UserDetails userDetails) {
-        CommentResponse response = commentService.createComment(
-                postId, request, userDetails.getUsername());
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Comment created", response));
-    }
-
-    @DeleteMapping("/{id}")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<ApiResponse<Void>> deleteComment(
-            @PathVariable Long postId,
-            @PathVariable Long id,
-            @AuthenticationPrincipal UserDetails userDetails) {
-        commentService.deleteComment(id, userDetails.getUsername());
-        return ResponseEntity.ok(ApiResponse.success("Comment deleted", null));
+            @Valid @RequestBody CommentRequest req,
+            @AuthenticationPrincipal UserDetails user) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(
+                "Comment created", commentService.createComment(postId, req, user.getUsername())));
     }
 }
 ```
 
-### Bước 7 — Thêm vào GraphQL Schema
+### Step 7 — GraphQL Schema
 
 ```graphql
-# src/main/resources/graphql/schema.graphqls — thêm vào file hiện có
-
 type Query {
-  # ... các query hiện có ...
   comments(postId: ID!, page: Int = 0, size: Int = 20): CommentConnection!
 }
-
 type Mutation {
-  # ... các mutation hiện có ...
   createComment(postId: ID!, content: String!): Comment!
   deleteComment(id: ID!): Boolean!
 }
-
-type Comment {
-  id: ID!
-  content: String!
-  postId: ID!
-  authorUsername: String!
-  createdAt: String
-}
-
-type CommentConnection {
-  content: [Comment!]!
-  totalElements: Int!
-  totalPages: Int!
-  pageNumber: Int!
-  pageSize: Int!
-  last: Boolean!
-}
+type Comment { id: ID! content: String! postId: ID! authorUsername: String! createdAt: String }
+type CommentConnection { content: [Comment!]! totalElements: Int! totalPages: Int! pageNumber: Int! pageSize: Int! last: Boolean! }
 ```
 
-### Bước 8 — Tạo GraphQL Resolver
+### Step 8 — GraphQL Resolver
 
 ```java
-// src/main/java/com/yourcompany/starter/comment/graphql/CommentResolver.java
-@Controller
-@RequiredArgsConstructor
+@Controller @RequiredArgsConstructor
 public class CommentResolver {
-
-    private final CommentService commentService;
-
     @QueryMapping
-    public PagedResponse<CommentResponse> comments(
-            @Argument Long postId,
-            @Argument int page,
-            @Argument int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").ascending());
-        return commentService.getCommentsByPost(postId, pageable);
-    }
+    public PagedResponse<CommentResponse> comments(@Argument Long postId,
+            @Argument int page, @Argument int size) { ... }
 
     @MutationMapping
     @PreAuthorize("isAuthenticated()")
-    public CommentResponse createComment(
-            @Argument Long postId,
-            @Argument String content,
-            @AuthenticationPrincipal UserDetails userDetails) {
-        CommentRequest request = new CommentRequest();
-        request.setContent(content);
-        return commentService.createComment(postId, request, userDetails.getUsername());
-    }
-
-    @MutationMapping
-    @PreAuthorize("isAuthenticated()")
-    public boolean deleteComment(
-            @Argument Long id,
-            @AuthenticationPrincipal UserDetails userDetails) {
-        commentService.deleteComment(id, userDetails.getUsername());
-        return true;
-    }
+    public CommentResponse createComment(@Argument Long postId, @Argument String content,
+            @AuthenticationPrincipal UserDetails user) { ... }
 }
 ```
 
-### Checklist khi thêm feature mới
+### Checklist
 
 ```
-[ ] V{n}__create_{tên}_table.sql  — migration trước tiên
-[ ] entity/                        — @Entity, @EntityListeners, FetchType.LAZY
-[ ] repository/                    — extends JpaRepository, @Query JOIN FETCH nếu cần
-[ ] dto/                           — *Request (validation) + *Response (static from())
-[ ] service/                       — @Transactional, auth check ở đây
-[ ] controller/                    — @PreAuthorize, @AuthenticationPrincipal
-[ ] schema.graphqls                — thêm Query/Mutation/Type mới
-[ ] graphql/                       — @QueryMapping / @MutationMapping
-[ ] test/                          — unit test service + integration test controller
+[ ] V{n}__create_{name}_table.sql
+[ ] @Entity (FetchType.LAZY on all relations)
+[ ] Repository (JOIN FETCH @Query where needed)
+[ ] *Request DTO (validation) + *Response DTO (static from())
+[ ] Service (@Transactional, auth checks here)
+[ ] REST Controller (@PreAuthorize, @AuthenticationPrincipal)
+[ ] schema.graphqls (new Query/Mutation/Type)
+[ ] GraphQL Resolver (@QueryMapping / @MutationMapping)
+[ ] Unit test (service) + Integration test (controller)
 ```
 
 ---
 
-## 5. JwtAuthFilter — Cách hoạt động
+## 8. How JwtAuthFilter Works
 
-File: `src/main/java/com/yourcompany/starter/auth/filter/JwtAuthFilter.java`
+**File:** `src/main/java/com/yourcompany/starter/auth/filter/JwtAuthFilter.java`
 
-### Luồng xử lý mỗi request
+### Request flow
 
 ```
 HTTP Request
-     │
-     ▼
-JwtAuthFilter.doFilterInternal()
-     │
-     ├─ Không có header "Authorization: Bearer ..."?
-     │        └─ filterChain.doFilter() → tiếp tục (endpoint public sẽ pass, protected sẽ bị từ chối bởi SecurityConfig)
-     │
-     ├─ Có Bearer token
-     │        │
-     │        ├─ JwtUtil.extractUsername(token) → Optional<String>
-     │        │        └─ Nếu empty (token malformed) → bỏ qua, filterChain.doFilter()
-     │        │
-     │        ├─ SecurityContextHolder đã có auth? → bỏ qua (request đã authenticated)
-     │        │
-     │        ├─ UserDetailsService.loadUserByUsername(username)
-     │        │
-     │        ├─ JwtUtil.isTokenValid(token, userDetails)
-     │        │        ├─ Kiểm tra: chữ ký hợp lệ
-     │        │        ├─ Kiểm tra: chưa hết hạn
-     │        │        └─ Kiểm tra: subject khớp username
-     │        │
-     │        └─ SecurityContextHolder.setAuthentication(authToken)
-     │
-     └─ filterChain.doFilter() — LUÔN gọi, dù token hợp lệ hay không
+  │
+  ▼
+JwtAuthFilter.doFilterInternal()          extends OncePerRequestFilter
+  │
+  ├─ No "Authorization: Bearer ..." header?
+  │       └─ pass through → SecurityConfig decides public/protected
+  │
+  ├─ Has Bearer token
+  │       ├─ JwtUtil.extractUsername(token) → Optional<String>
+  │       │       └─ empty (malformed) → skip, continue chain
+  │       │
+  │       ├─ SecurityContext already set? → skip (already authenticated)
+  │       │
+  │       ├─ loadUserByUsername(username)
+  │       ├─ JwtUtil.isTokenValid(token, userDetails)
+  │       │       ├─ signature valid
+  │       │       ├─ not expired
+  │       │       └─ subject matches username
+  │       │
+  │       └─ SecurityContextHolder.setAuthentication(authToken)
+  │
+  └─ filterChain.doFilter()  ← ALWAYS called, valid token or not
 ```
 
-### Quy tắc bắt buộc
+### Three non-negotiable rules
 
-**1. Kế thừa `OncePerRequestFilter`** — đảm bảo filter chỉ chạy đúng 1 lần mỗi request, kể cả khi có forward nội bộ.
+**1. Extend `OncePerRequestFilter`** — guaranteed to run exactly once per request, including internal forwards.
 
-**2. Không ném exception ra ngoài filter.** Toàn bộ logic JWT được bọc trong `try-catch`:
+**2. Never throw exceptions out of the filter.** All JWT logic is wrapped in `try-catch`:
 
 ```java
 try {
-    // ... JWT validation ...
+    // ... validation ...
 } catch (Exception e) {
-    log.warn("JWT authentication failed: {}", e.getMessage());
-    SecurityContextHolder.clearContext(); // dọn sạch nếu validation dở dang
+    log.warn("JWT auth failed: {}", e.getMessage());
+    SecurityContextHolder.clearContext();
 }
-filterChain.doFilter(request, response); // luôn tiếp tục chain
+filterChain.doFilter(request, response); // always called
 ```
 
-Nếu exception bị ném ra khỏi filter, Spring sẽ trả về lỗi 500, không phải 401. Thay vào đó:
-- Token invalid → không set `SecurityContextHolder`
-- Request đến endpoint protected → `AuthenticationEntryPoint` trong `SecurityConfig` trả về JSON 401
+If an exception escapes the filter, Spring returns 500, not 401. Invalid tokens should simply leave the `SecurityContext` empty; the `AuthenticationEntryPoint` in `SecurityConfig` then returns a JSON 401.
 
-**3. Luôn gọi `filterChain.doFilter()`** ở cuối — kể cả khi token invalid. Filter không được "block" request, chỉ "không authenticate" request.
+**3. Always call `filterChain.doFilter()`** — even when the token is invalid. The filter's job is to authenticate, not to block. Blocking is `SecurityConfig`'s responsibility.
 
-### `AuthenticationEntryPoint` — xử lý 401
+### Why `AuthenticationEntryPoint` matters
 
-Khi request đến endpoint protected mà không có authentication, `SecurityConfig` trả về JSON thay vì redirect:
+Without it, Spring Security redirects unauthenticated requests to `/login` (HTML 302). The custom entry point returns JSON instead:
 
 ```java
-.authenticationEntryPoint((request, response, e) -> {
-    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-    objectMapper.writeValue(response.getWriter(),
-            ApiResponse.error("Unauthorized", "UNAUTHORIZED"));
+.authenticationEntryPoint((req, res, ex) -> {
+    res.setContentType(MediaType.APPLICATION_JSON_VALUE);
+    res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+    objectMapper.writeValue(res.getWriter(),
+        ApiResponse.error("Unauthorized", "UNAUTHORIZED"));
 })
 ```
 
-Nếu không config `AuthenticationEntryPoint`, Spring Security mặc định redirect về `/login` → client nhận HTML 302, không phải JSON 401.
-
-### Sơ đồ tương tác các component Security
+### Security component interaction
 
 ```
-Request
-  │
-  ▼
-JwtAuthFilter          ← extends OncePerRequestFilter
-  │  (set SecurityContextHolder nếu token hợp lệ)
-  ▼
-SecurityFilterChain    ← định nghĩa trong SecurityConfig
-  │  (kiểm tra rule: permitAll / hasRole / authenticated)
-  │
-  ├─ Pass → Controller / GraphQL Resolver
-  │           │
-  │           └─ @PreAuthorize("isAuthenticated()")  ← method-level security
-  │
-  └─ Fail → AuthenticationEntryPoint (401 JSON)
-           └─ AccessDeniedHandler (403 JSON)
+Request → JwtAuthFilter → SecurityFilterChain → Controller / Resolver
+                │                  │
+         sets context         checks rules:
+         if token valid        permitAll / hasRole / authenticated
+                                        │
+                              fail → AuthenticationEntryPoint (401 JSON)
+                                     AccessDeniedHandler      (403 JSON)
 ```
 
 ---
 
-## 6. Viết Tests
+## 9. Writing Tests
 
-### Unit Test — Service layer
+### Unit tests — Service layer
 
-Dùng Mockito, không cần Spring context hay DB. Chạy nhanh nhất.
+Uses Mockito only; no Spring context or database. Runs fastest.
 
 ```java
 @ExtendWith(MockitoExtension.class)
-class CommentServiceTest {
+class PostServiceTest {
 
-    @Mock CommentRepository commentRepository;
     @Mock PostRepository postRepository;
     @Mock UserRepository userRepository;
-
-    @InjectMocks CommentService commentService;
+    @InjectMocks PostService postService;
 
     @Test
-    void createComment_withValidPostAndUser_savesAndReturns() {
-        // Arrange
-        Post post = Post.builder().id(1L).title("T").content("C").build();
+    void createPost_savesAndReturnsResponse() {
         User author = User.builder().id(1L).username("alice").build();
-        Comment saved = Comment.builder()
-                .id(10L).content("Nice!").post(post).author(author).build();
+        Post saved  = Post.builder().id(1L).title("T").content("C").author(author).build();
 
-        when(postRepository.findById(1L)).thenReturn(Optional.of(post));
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(author));
-        when(commentRepository.save(any(Comment.class))).thenReturn(saved);
+        when(postRepository.save(any())).thenReturn(saved);
 
-        CommentRequest request = new CommentRequest();
-        request.setContent("Nice!");
+        PostRequest req = new PostRequest();
+        req.setTitle("T"); req.setContent("C");
+        PostResponse res = postService.createPost(req, "alice");
 
-        // Act
-        CommentResponse response = commentService.createComment(1L, request, "alice");
-
-        // Assert
-        assertThat(response.getId()).isEqualTo(10L);
-        assertThat(response.getContent()).isEqualTo("Nice!");
-        assertThat(response.getAuthorUsername()).isEqualTo("alice");
-        verify(commentRepository).save(any(Comment.class));
+        assertThat(res.getId()).isEqualTo(1L);
+        verify(postRepository).save(any(Post.class));
     }
 
     @Test
-    void deleteComment_byNonOwner_throwsUnauthorized() {
+    void updatePost_byNonOwner_throwsUnauthorized() {
         User owner = User.builder().username("owner").roles(Set.of(Role.ROLE_USER)).build();
-        User other = User.builder().username("other").roles(Set.of(Role.ROLE_USER)).build();
-        Comment comment = Comment.builder().id(1L).author(owner).build();
+        Post post  = Post.builder().id(1L).author(owner).build();
 
-        when(commentRepository.findByIdWithAuthor(1L)).thenReturn(Optional.of(comment));
-        when(userRepository.findByUsername("other")).thenReturn(Optional.of(other));
+        when(postRepository.findByIdWithAuthor(1L)).thenReturn(Optional.of(post));
+        when(userRepository.findByUsername("other"))
+                .thenReturn(Optional.of(User.builder().username("other")
+                        .roles(Set.of(Role.ROLE_USER)).build()));
 
-        assertThatThrownBy(() -> commentService.deleteComment(1L, "other"))
+        assertThatThrownBy(() -> postService.updatePost(1L, new PostRequest(), "other"))
                 .isInstanceOf(UnauthorizedException.class);
-        verify(commentRepository, never()).delete(any());
-    }
-
-    @Test
-    void createComment_withNonexistentPost_throwsResourceNotFound() {
-        when(postRepository.findById(99L)).thenReturn(Optional.empty());
-
-        CommentRequest request = new CommentRequest();
-        request.setContent("Test");
-
-        assertThatThrownBy(() -> commentService.createComment(99L, request, "alice"))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("Post not found with id: 99");
+        verify(postRepository, never()).save(any());
     }
 }
 ```
 
-> **Nguyên tắc unit test:**
-> - `when(...).thenReturn(...)` cho happy path
-> - `assertThatThrownBy(...)` cho error case
-> - `verify(mock, never()).method()` để xác nhận side effect KHÔNG xảy ra
+### Integration tests — Controller layer
 
-### Integration Test — Controller layer
-
-Dùng H2 in-memory (profile `test`), cần `@SpringBootTest` + `@AutoConfigureMockMvc`. Tests này verify toàn bộ stack từ HTTP → DB.
+Uses H2 in-memory (`@ActiveProfiles("test")`), tests the full HTTP stack.
 
 ```java
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional
-class CommentControllerTest {
+class AuthControllerTest {
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
-    @Autowired UserRepository userRepository;
-    @Autowired PostRepository postRepository;
-    @Autowired PasswordEncoder passwordEncoder;
-
-    private String accessToken;
-    private Long postId;
-
-    @BeforeEach
-    void setUp() throws Exception {
-        // Tạo user + post
-        User user = userRepository.save(User.builder()
-                .username("alice")
-                .email("alice@example.com")
-                .password(passwordEncoder.encode("Password1"))
-                .roles(Set.of(Role.ROLE_USER))
-                .build());
-
-        Post post = postRepository.save(Post.builder()
-                .title("Test Post")
-                .content("Content")
-                .published(true)
-                .author(user)
-                .build());
-        postId = post.getId();
-
-        // Login để lấy access token
-        LoginRequest loginRequest = new LoginRequest();
-        loginRequest.setUsername("alice");
-        loginRequest.setPassword("Password1");
-
-        String response = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(loginRequest)))
-                .andReturn().getResponse().getContentAsString();
-
-        accessToken = objectMapper.readTree(response)
-                .at("/data/accessToken").asText();
-    }
 
     @Test
-    void createComment_withValidToken_returns201() throws Exception {
-        CommentRequest request = new CommentRequest();
-        request.setContent("Great post!");
+    void login_withValidCredentials_returnsTokens() throws Exception {
+        // setup: save user with encoded password in @BeforeEach
+        LoginRequest req = new LoginRequest();
+        req.setUsername("testuser"); req.setPassword("Password1");
 
-        mockMvc.perform(post("/api/posts/{postId}/comments", postId)
-                        .header("Authorization", "Bearer " + accessToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.content").value("Great post!"))
-                .andExpect(jsonPath("$.data.authorUsername").value("alice"));
-    }
-
-    @Test
-    void createComment_withoutToken_returns401() throws Exception {
-        CommentRequest request = new CommentRequest();
-        request.setContent("Anonymous comment");
-
-        mockMvc.perform(post("/api/posts/{postId}/comments", postId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    void getComments_publicEndpoint_returns200() throws Exception {
-        mockMvc.perform(get("/api/posts/{postId}/comments", postId))
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.content").isArray());
+                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.tokenType").value("Bearer"));
+    }
+
+    @Test
+    void login_withWrongPassword_returns401() throws Exception {
+        // ...
+        mockMvc.perform(/* ... */)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_CREDENTIALS"));
     }
 }
 ```
 
-### Test với MockUser (không cần login thật)
+### Testing with `@WithMockUser`
 
-Khi chỉ muốn test logic controller mà không muốn thực hiện login flow:
+Skip the login flow when you only need to test controller logic:
 
 ```java
 @Test
 @WithMockUser(username = "alice", roles = {"USER"})
-void createComment_withMockUser_returns201() throws Exception {
-    // Không cần Authorization header — @WithMockUser inject thẳng vào SecurityContext
-    CommentRequest request = new CommentRequest();
-    request.setContent("Mocked user comment");
-
-    mockMvc.perform(post("/api/posts/{postId}/comments", 1L)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(objectMapper.writeValueAsString(request)))
+void createPost_authenticated_returns201() throws Exception {
+    // No Authorization header needed
+    mockMvc.perform(post("/api/posts").contentType(APPLICATION_JSON).content("..."))
             .andExpect(status().isCreated());
 }
 ```
 
-### Chạy tests
+### Run commands
 
 ```bash
-# Tất cả tests trong Docker (không cần Java host)
-docker run --rm \
-  -v $(pwd):/app \
-  -w /app \
-  maven:3.9.6-eclipse-temurin-17 \
-  mvn test -B
+# All tests (Docker — no Java on host)
+docker run --rm -v $(pwd):/app -w /app maven:3.9.6-eclipse-temurin-17 mvn test -B
 
-# Chỉ một class test cụ thể
-docker run --rm \
-  -v $(pwd):/app \
-  -w /app \
-  maven:3.9.6-eclipse-temurin-17 \
-  mvn test -Dtest=PostServiceTest -B
+# Specific class
+... mvn test -Dtest=PostServiceTest -B
 
-# Test với coverage report (JaCoCo)
-docker run --rm \
-  -v $(pwd):/app \
-  -w /app \
-  maven:3.9.6-eclipse-temurin-17 \
-  mvn test jacoco:report -B
-# Report tại: target/site/jacoco/index.html
+# Coverage report → target/site/jacoco/index.html
+... mvn test jacoco:report -B
 ```
 
 ---
 
-## Cấu trúc project
+## 10. Project Structure
 
 ```
 src/
 ├── main/
 │   ├── java/com/yourcompany/starter/
-│   │   ├── StarterApplication.java
+│   │   ├── StarterApplication.java          @EnableJpaAuditing, @EnableConfigurationProperties
 │   │   ├── config/
-│   │   │   ├── SecurityConfig.java       ← JWT filter chain, CORS, AuthEntryPoint
-│   │   │   ├── JwtConfig.java            ← @ConfigurationProperties app.jwt.*
+│   │   │   ├── SecurityConfig.java          JWT filter chain, CORS, AuthEntryPoint (401 JSON)
+│   │   │   ├── JwtConfig.java               @ConfigurationProperties(prefix = "app.jwt")
 │   │   │   └── GraphQLConfig.java
 │   │   ├── auth/
-│   │   │   ├── controller/AuthController.java
-│   │   │   ├── dto/                      ← RegisterRequest, LoginRequest, AuthResponse
-│   │   │   ├── filter/JwtAuthFilter.java ← OncePerRequestFilter
+│   │   │   ├── controller/AuthController.java   REST: /api/auth/**
+│   │   │   ├── graphql/AuthResolver.java         GraphQL: register/login/refreshToken/logout/me
+│   │   │   ├── dto/                              RegisterRequest, LoginRequest, AuthResponse
+│   │   │   ├── filter/JwtAuthFilter.java         OncePerRequestFilter — never throws
 │   │   │   └── service/AuthService.java
 │   │   ├── user/
-│   │   │   ├── entity/User.java          ← implements UserDetails
-│   │   │   ├── entity/Role.java          ← enum ROLE_USER, ROLE_ADMIN
+│   │   │   ├── entity/User.java              implements UserDetails, table "users"
+│   │   │   ├── entity/Role.java              enum ROLE_USER, ROLE_ADMIN
+│   │   │   ├── dto/UserResponse.java
 │   │   │   ├── repository/UserRepository.java
 │   │   │   └── service/UserDetailsServiceImpl.java
 │   │   ├── post/
-│   │   │   ├── controller/PostController.java
-│   │   │   ├── graphql/PostResolver.java ← @QueryMapping, @MutationMapping
-│   │   │   ├── dto/                      ← PostRequest, PostResponse
-│   │   │   ├── entity/Post.java
-│   │   │   ├── repository/PostRepository.java
-│   │   │   └── service/PostService.java
+│   │   │   ├── controller/PostController.java    REST: /api/posts/**
+│   │   │   ├── controller/AdminPostController.java
+│   │   │   ├── graphql/PostResolver.java          GraphQL: posts/post/myPosts/createPost/...
+│   │   │   ├── dto/                              PostRequest, PostResponse
+│   │   │   ├── entity/Post.java              FetchType.LAZY on author
+│   │   │   ├── repository/PostRepository.java    JOIN FETCH query for N+1 prevention
+│   │   │   └── service/PostService.java      auth checks: owner or ADMIN
 │   │   ├── common/
 │   │   │   ├── exception/
-│   │   │   │   ├── GlobalExceptionHandler.java  ← @RestControllerAdvice
+│   │   │   │   ├── GlobalExceptionHandler.java   @RestControllerAdvice — REST errors
+│   │   │   │   ├── GraphQLExceptionResolver.java  DataFetcherExceptionResolver — GQL errors
 │   │   │   │   ├── ResourceNotFoundException.java
 │   │   │   │   └── UnauthorizedException.java
 │   │   │   ├── response/
-│   │   │   │   ├── ApiResponse.java      ← { success, message, data, errorCode, timestamp }
-│   │   │   │   └── PagedResponse.java    ← wrapper Spring Page
-│   │   │   └── util/JwtUtil.java         ← generate, validate token (JJWT 0.12.x)
+│   │   │   │   ├── ApiResponse.java          { success, message, data, errorCode, timestamp }
+│   │   │   │   └── PagedResponse.java        wraps Spring Page<T>
+│   │   │   └── util/JwtUtil.java             JJWT 0.12.x — generate / validate
 │   │   └── token/
-│   │       ├── entity/RefreshToken.java
+│   │       ├── entity/RefreshToken.java      UUID token (not JWT), revocable
 │   │       ├── repository/RefreshTokenRepository.java
 │   │       └── service/RefreshTokenService.java
 │   └── resources/
-│       ├── application.yml               ← base config
-│       ├── application-dev.yml           ← graphiql on, sql log on
-│       ├── application-prod.yml          ← tối giản, không graphiql
-│       ├── application-test.yml          ← H2 in-memory, flyway off
+│       ├── application.yml                   base config (env var placeholders)
+│       ├── application-dev.yml               SQL logging, Apollo Sandbox CORS
+│       ├── application-prod.yml              minimal, no graphiql
+│       ├── application-test.yml              H2 in-memory, Flyway disabled
 │       ├── graphql/schema.graphqls
+│       ├── static/playground.html            Self-hosted GraphiQL (cdn.jsdelivr.net)
 │       └── db/migration/
 │           ├── V1__create_users_table.sql
 │           ├── V2__create_posts_table.sql
 │           └── V3__create_refresh_tokens_table.sql
 └── test/
     └── java/com/yourcompany/starter/
-        ├── auth/AuthControllerTest.java  ← @SpringBootTest + H2
-        └── post/PostServiceTest.java     ← @ExtendWith(MockitoExtension.class)
+        ├── auth/AuthControllerTest.java      @SpringBootTest + H2
+        ├── post/PostServiceTest.java         @ExtendWith(MockitoExtension.class)
+        └── tools/SchemaExportTest.java       generates target/generated-schema.sql
 ```
 
-## REST API Endpoints
+---
 
-### Auth
+## Security Checklist (before deploying to production)
 
-| Method | URL | Auth | Mô tả |
-|--------|-----|------|--------|
-| POST | `/api/auth/register` | Public | Đăng ký |
-| POST | `/api/auth/login` | Public | Đăng nhập → access + refresh token |
-| POST | `/api/auth/refresh` | Public | Làm mới access token |
-| POST | `/api/auth/logout` | Bearer | Revoke refresh token |
-
-### Posts
-
-| Method | URL | Auth | Mô tả |
-|--------|-----|------|--------|
-| GET | `/api/posts?page=0&size=10&sort=createdAt,desc` | Public | Danh sách (phân trang) |
-| GET | `/api/posts/{id}` | Public | Chi tiết |
-| GET | `/api/posts/my` | Bearer | Bài viết của tôi |
-| POST | `/api/posts` | Bearer | Tạo mới |
-| PUT | `/api/posts/{id}` | Bearer | Cập nhật (owner/ADMIN) |
-| DELETE | `/api/posts/{id}` | Bearer | Xoá (owner/ADMIN) |
-| GET | `/api/admin/posts` | ADMIN | Tất cả bài viết |
-
-### GraphQL
-
-Endpoint: `POST /graphql` với header `Authorization: Bearer <token>`
-
-```graphql
-# Query
-query {
-  posts(page: 0, size: 10) {
-    content { id title authorUsername createdAt }
-    totalElements totalPages
-  }
-}
-
-# Mutation (cần auth)
-mutation {
-  createPost(title: "Hello", content: "World", published: true) {
-    id title
-  }
-}
-```
+- [ ] `JWT_SECRET` is at least 256 bits, generated randomly, set via env var
+- [ ] Access token TTL is short (15 minutes recommended)
+- [ ] Refresh tokens are stored in DB and can be revoked
+- [ ] HTTPS enforced — HTTP rejected
+- [ ] CORS `allowed-origins` is a specific list, not `*`
+- [ ] Rate limiting on `/api/auth/login` (Bucket4j / Resilience4j)
+- [ ] `graphiql.enabled: false` in production
+- [ ] `/actuator/**` restricted to ADMIN only
+- [ ] Passwords and JWT tokens are never logged
+- [ ] Dependency scan: `mvn dependency-check:check`
